@@ -518,6 +518,15 @@ F_N_DES = 10           # desired normal force
 SIM_TIME = 60.0         # seconds per scenario
 LOG_EVERY = 1           # log every step (can increase for fewer rows)
 
+# ============================================================================
+# DISTURBANCE PARAMETERS
+# ============================================================================
+DISTURBANCE_START_TIME = 10  # [s]
+DISTURBANCE_DURATION = 1.0     # [s]
+DISTURBANCE_FORCE = 1.0        # [N] - downward force
+DISTURBANCE_DIRECTION = np.array([0.0, 0.0, -1.0])  # Downward in world frame
+# ============================================================================
+
 def run_scenario(height_cfg):
     """
     Run one headless simulation for a given height configuration.
@@ -545,12 +554,14 @@ def run_scenario(height_cfg):
 
     EE_SITE_NAME = "end_effector_site"
     EE_FORCE_SENSOR_NAME = "ee_force"
+    EE_BODY_NAME = "wrist_2_link"
 
     ee_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, EE_SITE_NAME)
     wall_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, wall_site_name)
     ee_force_sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, EE_FORCE_SENSOR_NAME)
     ee_force_adr = model.sensor_adr[ee_force_sid]
     ee_force_dim = model.sensor_dim[ee_force_sid]
+    ee_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, EE_BODY_NAME)
 
     # Desired state
     n_states_joint = 6
@@ -674,9 +685,31 @@ def run_scenario(height_cfg):
         for i, act_id in enumerate(actuator_ids):
             data.ctrl[act_id] = u[i]
 
+        # ====================================================================
+        # DISTURBANCE APPLICATION
+        # ====================================================================
+        # Clear qfrc_applied before applying new forces (prevent accumulation)
+        data.qfrc_applied[:] = 0.0
+        
+        # Apply disturbance force at end-effector if in disturbance window
+        if DISTURBANCE_START_TIME <= t_now < DISTURBANCE_START_TIME + DISTURBANCE_DURATION:
+            # Get current end-effector position in world frame
+            ee_pos = data.site_xpos[ee_site_id].copy()
+            # Force and torque in world frame (downward force, no torque)
+            force_world = (DISTURBANCE_FORCE * DISTURBANCE_DIRECTION).reshape(3, 1)
+            torque_world = np.zeros((3, 1))
+            # qfrc_target: where to store the resulting generalized forces
+            qfrc_target = np.zeros((model.nv, 1))
+            # Apply downward force at end-effector site position (world coordinates)
+            mujoco.mj_applyFT(model, data, force_world, torque_world, ee_pos.reshape(3, 1), ee_body_id, qfrc_target)
+            # Set the generalized forces
+            data.qfrc_applied[:] = qfrc_target.flatten()
+        # ====================================================================
+
         mujoco.mj_step(model, data)
 
         if step % LOG_EVERY == 0:
+            disturbance_active = 1 if (DISTURBANCE_START_TIME <= t_now < DISTURBANCE_START_TIME + DISTURBANCE_DURATION) else 0
             rows.append({
                 "height": name,
                 "time": t_now,
@@ -686,6 +719,7 @@ def run_scenario(height_cfg):
                 "joint_err_norm": joint_err_norm,
                 "ee_err_norm": ee_err_norm,
                 "x_n_err": x_n_err,
+                "disturbance_active": disturbance_active,
             })
 
     return rows
@@ -700,7 +734,7 @@ for cfg in HEIGHT_CONFIGS:
 
 csv_filename = "force_lqi_heights.csv"
 fieldnames = ["height", "time", "F_n", "F_err", "z_f",
-              "joint_err_norm", "ee_err_norm", "x_n_err"]
+              "joint_err_norm", "ee_err_norm", "x_n_err", "disturbance_active"]
 
 with open(csv_filename, "w", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=fieldnames)

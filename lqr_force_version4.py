@@ -266,7 +266,7 @@ n_states_joint = 6
 n_controls = 3
 
 # Desired joint configuration (you can change this)
-q_desired = np.array([1.97253242, 1.26623755, 0.017339027])
+q_desired = np.array([1.97253242, 1.26623755, 0.01733902])
 qdot_desired = np.array([0.0, 0.0, 0.0])
 
 x_desired_joint = np.zeros(n_states_joint)
@@ -277,7 +277,7 @@ x_desired_joint[3:] = qdot_desired
 n_states_aug = 7
 
 # Desired normal force (env-on-robot, positive when pushing into wall)
-F_N_DES = 5.0  # [N]
+F_N_DES = 1.0  # [N]
 
 # ============================================================================
 # PART 3: SETUP AND COMPUTATION
@@ -393,7 +393,7 @@ B_aug[:n_states_joint, :] = B  # z_f has no direct input
 # Q and R matrices for the augmented (joint + integral-of-force-error) state
 Q_joint = np.eye(n_states_joint)
 Q_joint[:3, :3] *= 500.0  # Position error weight
-Q_joint[3:, 3:] *= 20.0   # Velocity error weight
+Q_joint[3:, 3:] *= 50.0   # Velocity error weight
 
 Q_aug = np.zeros((n_states_aug, n_states_aug))
 Q_aug[:n_states_joint, :n_states_joint] = Q_joint
