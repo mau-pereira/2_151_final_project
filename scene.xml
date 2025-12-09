@@ -32,8 +32,8 @@
     <geom name="wall_2" type="box" size="0.05 0.25 0.5" pos="0.75 0 0.5" material="steel" density="15000" friction="1.0 0.1 0.005" solref="0.02 1" solimp="0.9 0.95 0.001"/>
     <!-- <geom name="wall_3" type="box" size="0.05 0.25 0.025" pos="0.75 0 0.8" material="steel" density="15000" friction="1.0 0.1 0.005" solref="0.02 1" solimp="0.9 0.95 0.001"/> -->
     <!-- <site name="low" type="sphere" size="0.01" pos="0.7 0.135 0.05" rgba="1 1 1 1"/> -->
-    <!-- <site name="medium" type="sphere" size="0.01" pos="0.7 0.135 0.5" rgba="1 1 1 1"/>
-    <site name="high" type="sphere" size="0.01" pos="0.7 0.135 0.8" rgba="1 1 1 1"/> -->
+    <site name="medium" type="sphere" size="0.01" pos="0.7 0.135 0.5" rgba="1 1 1 1"/>
+    <!-- <site name="high" type="sphere" size="0.01" pos="0.7 0.135 0.8" rgba="1 1 1 1"/> -->
     
     
     <!-- Falling box perturbation: 20cm x 20cm x 20cm, 2kg, 10m above end effector -->

@@ -392,14 +392,14 @@ B_aug[:n_states_joint, :] = B  # z_f has no direct input
 
 # Q and R matrices for the augmented (joint + integral-of-force-error) state
 Q_joint = np.eye(n_states_joint)
-Q_joint[:3, :3] *= 100.0  # Position error weight
-Q_joint[3:, 3:] *= 10.0   # Velocity error weight
+Q_joint[:3, :3] *= 500.0  # Position error weight
+Q_joint[3:, 3:] *= 20.0   # Velocity error weight
 
 Q_aug = np.zeros((n_states_aug, n_states_aug))
 Q_aug[:n_states_joint, :n_states_joint] = Q_joint
 
 # Weight on integral of force error z_f
-Q_aug[n_states_joint, n_states_joint] = 60.0  # tune as needed
+Q_aug[n_states_joint, n_states_joint] = 50.0  # tune as needed
 
 R = np.eye(n_controls) * 0.1  # Control effort weight
 
@@ -487,4 +487,3 @@ with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui
         viewer.sync()
 
 print("\nSimulation complete.")
-
