@@ -1,0 +1,53 @@
+<mujoco model="ur5e scene">
+  <include file="ur5e_t.xml"/>
+
+  <statistic center="0.35 0.1 0.3" extent="1.2"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="135" elevation="-15"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="steel" rgba="1 1 1 1" specular="0.5" shininess="0.3"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <!-- Unit vector markers at world origin -->
+    <site name="x_axis" type="sphere" size="0.02" pos="0.5 0 0" rgba="1 0 0 1" group="0"/>
+    <site name="y_axis" type="sphere" size="0.02" pos="0 0.5 0" rgba="0 1 0 1" group="0"/>
+    <site name="z_axis" type="sphere" size="0.02" pos="0 0 0.5" rgba="0 0 1 1" group="0"/>
+    <!-- Cylinders from origin to unit vector endpoints -->
+    <geom name="x_axis_cylinder" type="cylinder" fromto="0 0 0 0.5 0 0" size="0.01" rgba="1 0 0 1" contype="0" conaffinity="0" group="0"/>
+    <geom name="y_axis_cylinder" type="cylinder" fromto="0 0 0 0 0.5 0" size="0.01" rgba="0 1 0 1" contype="0" conaffinity="0" group="0"/>
+    <geom name="z_axis_cylinder" type="cylinder" fromto="0 0 0 0 0 0.5" size="0.01" rgba="0 0 1 1" contype="0" conaffinity="0" group="0"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" contype="0" conaffinity="0"/>
+    <!-- <geom name="wall_1" type="box" size="0.05 0.25 0.025" pos="0.75 0 0.05" material="steel" density="15000" friction="1.0 0.1 0.005" solref="0.02 1" solimp="0.9 0.95 0.001" contype="1" conaffinity="1"/> -->
+    <geom name="wall_2" type="box" size="0.05 0.25 0.5" pos="0.75 0 0.5" material="steel" density="15000" friction="1.0 0.1 0.005" solref="0.02 1" solimp="0.9 0.95 0.001"/>
+    <!-- <geom name="wall_3" type="box" size="0.05 0.25 0.025" pos="0.75 0 0.8" material="steel" density="15000" friction="1.0 0.1 0.005" solref="0.02 1" solimp="0.9 0.95 0.001"/> -->
+    <!-- <site name="low" type="sphere" size="0.01" pos="0.7 0.135 0.05" rgba="1 1 1 1"/> -->
+    <site name="medium" type="sphere" size="0.01" pos="0.7 0.135 0.5" rgba="1 1 1 1"/>
+    <!-- <site name="high" type="sphere" size="0.01" pos="0.7 0.135 0.8" rgba="1 1 1 1"/> -->
+    
+    
+    <!-- Falling box perturbation: 20cm x 20cm x 20cm, 2kg, 10m above end effector -->
+    <!-- Positioned above end effector at desired joint configuration -->
+    <!-- <body name="falling_box" pos="0.69103 0.134 10.075">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="2.0" diaginertia="0.01333 0.01333 0.01333"/>
+      <geom name="box" type="box" size="0.1 0.1 0.1" material="steel" density="2000" friction="0.7 0.1 0.005"/>
+    </body> -->
+  </worldbody>
+
+  <keyframe>
+    <key name="high" qpos="2.18718072 0.36788401 0.076558322"/>
+    <key name="medium" qpos="1.97253242 1.26623755 0.01733902"/>
+    <key name="low" qpos="2.55461019  1.60952476 -0.92886277"/>
+  </keyframe>
+</mujoco>

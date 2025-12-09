@@ -1,0 +1,186 @@
+<?xml version="1.0" ?>
+<mujoco model="ur5e">
+  <option integrator="implicitfast"/>
+  <compiler angle="radian"/>
+  <actuator>
+    <!-- Physical limits of the actuator. -->
+    <!-- Values taken from https://www.universal-robots.com/articles/ur-articles/max-joint-torques/ -->
+    <motor ctrllimited="true" ctrlrange="-150.0 150.0" joint="shoulder_lift_joint" name="torq_j2"/>
+    <motor ctrllimited="true" ctrlrange="-150.0 150.0" joint="elbow_joint" name="torq_j3"/>
+    <motor ctrllimited="true" ctrlrange="-28.0 28.0" joint="wrist_1_joint" name="torq_j4"/>
+    
+    <!-- New actuators similar to universal_robots_ur5e/ur5e_p.xml -->
+    <!-- <general gaintype="fixed" biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="2000" biasprm="0 -2000 -400" forcerange="-150 150" name="shoulder_lift" joint="shoulder_lift_joint"/>
+    <general gaintype="fixed" biastype="affine" ctrlrange="-3.1415 3.1415" gainprm="2000" biasprm="0 -2000 -400" forcerange="-150 150" name="elbow" joint="elbow_joint"/>
+    <general gaintype="fixed" biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="500" biasprm="0 -500 -100" forcerange="-28 28" name="wrist_1" joint="wrist_1_joint"/> -->
+  </actuator>
+  <asset>
+    <material name="Black" specular="0.5" shininess="0.25" rgba="0.033102 0.033102 0.033102 1.000000"/>
+    <material name="JointGrey" specular="0.5" shininess="0.25" rgba="0.278431 0.278431 0.278431 1.000000"/>
+    <material name="LinkGrey" specular="0.5" shininess="0.25" rgba="0.820392 0.820392 0.820392 1.000000"/>
+    <material name="URBlue" specular="0.5" shininess="0.25" rgba="0.490196 0.678431 0.800000 1.000000"/>
+    <!-- base material and mesh -->
+    <mesh name="base_vis_0" file="obj_meshes/base_vis/base_vis_0.obj"/>
+    <mesh name="base_vis_1" file="obj_meshes/base_vis/base_vis_1.obj"/>
+    <!-- forearm mesh -->
+    <mesh name="forearm_vis_0" file="obj_meshes/forearm_vis/forearm_vis_0.obj"/>
+    <mesh name="forearm_vis_1" file="obj_meshes/forearm_vis/forearm_vis_1.obj"/>
+    <mesh name="forearm_vis_2" file="obj_meshes/forearm_vis/forearm_vis_2.obj"/>
+    <mesh name="forearm_vis_3" file="obj_meshes/forearm_vis/forearm_vis_3.obj"/>
+    <!-- shoulder material and mesh -->
+    <mesh name="shoulder_vis_0" file="obj_meshes/shoulder_vis/shoulder_vis_0.obj"/>
+    <mesh name="shoulder_vis_1" file="obj_meshes/shoulder_vis/shoulder_vis_1.obj"/>
+    <mesh name="shoulder_vis_2" file="obj_meshes/shoulder_vis/shoulder_vis_2.obj"/>
+    <!-- upperarm material and mesh -->
+    <mesh name="upperarm_vis_0" file="obj_meshes/upperarm_vis/upperarm_vis_0.obj"/>
+    <mesh name="upperarm_vis_1" file="obj_meshes/upperarm_vis/upperarm_vis_1.obj"/>
+    <mesh name="upperarm_vis_2" file="obj_meshes/upperarm_vis/upperarm_vis_2.obj"/>
+    <mesh name="upperarm_vis_3" file="obj_meshes/upperarm_vis/upperarm_vis_3.obj"/>
+    <!-- wrist1 material and mesh -->
+    <mesh name="wrist1_vis_0" file="obj_meshes/wrist1_vis/wrist1_vis_0.obj"/>
+    <mesh name="wrist1_vis_1" file="obj_meshes/wrist1_vis/wrist1_vis_1.obj"/>
+    <mesh name="wrist1_vis_2" file="obj_meshes/wrist1_vis/wrist1_vis_2.obj"/>
+    <!-- wrist2 material and mesh -->
+    <mesh name="wrist2_vis_0" file="obj_meshes/wrist2_vis/wrist2_vis_0.obj"/>
+    <mesh name="wrist2_vis_1" file="obj_meshes/wrist2_vis/wrist2_vis_1.obj"/>
+    <mesh name="wrist2_vis_2" file="obj_meshes/wrist2_vis/wrist2_vis_2.obj"/>
+    <!-- wrist3 material and mesh -->
+    <mesh name="wrist3_vis" file="obj_meshes/wrist3_vis/wrist3_vis.obj"/>
+    <mesh name="base" file="meshes/base.stl"/>
+    <mesh name="shoulder" file="meshes/shoulder.stl"/>
+    <mesh name="upperarm" file="meshes/upperarm.stl"/>
+    <mesh name="forearm" file="meshes/forearm.stl"/>
+    <mesh name="wrist1" file="meshes/wrist1.stl"/>
+    <mesh name="wrist2" file="meshes/wrist2.stl"/>
+    <mesh name="wrist3" file="meshes/wrist3.stl"/>
+  </asset>
+  <worldbody>
+    <body name="base" pos="0 0 0">
+      <!-- robot view -->
+      <camera mode="fixed" name="robotview" pos="1.0 0 0.4" quat="0.653 0.271 0.271 0.653"/>
+      <inertial diaginertia="0 0 0" mass="0" pos="0 0 0"/>
+      <site name="imu" size="0.01" pos="0.0 0.0 0.0" group="5"/>
+      <!-- Sphere at end of base (where base cylinder used to be) -->
+      <geom name="base_sphere" type="sphere" size="0.03" pos="0 0 0.163" rgba="1 1 1 1" group="5" contype="0" conaffinity="0"/>
+      <!-- mount attached here -->
+      <body name="fixed_base_link" pos="0 0 0">
+        <site name="right_center" pos="0 0 0" size="0.01" rgba="1 0.3 0.3 1" group="5"/>
+        <geom mesh="base_vis_0" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+        <geom mesh="base_vis_1" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+        <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="base" name="base_col" group="3"/>
+        <body name="shoulder_link" pos="0 0 0.163">
+          <inertial pos="0 0 0" mass="3.7" diaginertia="0.0102675 0.0102675 0.00666"/>
+          <geom mesh="shoulder_vis_0" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
+          <geom mesh="shoulder_vis_1" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+          <geom mesh="shoulder_vis_2" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+          <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="shoulder" name="shoulder_col" group="3"/>
+          <body name="upper_arm_link" pos="0 0.138 0" quat="0.707107 0 -0.707107 0">
+            <inertial pos="0 0 0.2125" mass="8.393" diaginertia="0.133886 0.133886 0.0151074"/>
+            <joint name="shoulder_lift_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-6.28319 6.28319" damping="0.001" frictionloss="0.01"/>
+            <site name="shoulder_lift_joint_site" size="0.1" pos="0 0 0" rgba="1 1 0 1" type="sphere" group="5"/>
+            <!-- Center of Mass of Link 1 (upper_arm_link only, not including children) relative to upper_arm_link origin -->
+            <site name="link1_com" size="0.01" pos="0 0 0.2125" rgba="0 1 0 1" type="sphere" group="3"/>
+            <!-- Cylinder to verify x-axis distance (0.425m) from shoulder_lift_joint_site toward elbow -->
+            <!-- Original box extended from (0,0,0) to (0,0,0.425) along z-axis (after 180° y rotation, this is -x direction) -->
+            <geom name="link1_cylinder" type="cylinder" fromto="0 0 0 0 0 0.425" size="0.02" rgba="0 0 0 1" group="5" contype="0" conaffinity="0"/>
+            <!-- Sphere at end of link1 cylinder -->
+            <geom name="link1_sphere" type="sphere" size="0.03" pos="0 0 0.425" rgba="1 1 1 1" group="5" contype="0" conaffinity="0"/>
+            <geom mesh="upperarm_vis_0" material="LinkGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+            <geom mesh="upperarm_vis_1" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+            <geom mesh="upperarm_vis_2" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+            <geom mesh="upperarm_vis_3" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
+            <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="upperarm" name="upperarm_col" group="3"/>
+            <body name="forearm_link" pos="0 -0.131 0.425">
+              <inertial pos="0 0 0.196" mass="2.275" diaginertia="0.0311796 0.0311796 0.004095"/>
+              <joint name="elbow_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-3.14159 3.14159" damping="0.001" frictionloss="0.01"/>
+              <site name="elbow_joint_site" size="0.1" pos="0 0 0" rgba="1 1 0 1" type="sphere" group="5"/>
+              <!-- Center of Mass of Link 2 (forearm_link only, not including children) relative to forearm_link origin -->
+              <site name="link2_com" size="0.01" pos="0 0 0.196" rgba="0 1 0 1" type="sphere" group="3"/>
+              <!-- Cylinder to verify x-axis distance (0.392m) from elbow_joint_site toward wrist_1 -->
+              <!-- Original box extended from (0,0,0) to (0,0,0.392) along z-axis (after 180° y rotation, this is -x direction) -->
+              <geom name="link2_cylinder" type="cylinder" fromto="0 0 0 0 0 0.392" size="0.02" rgba="0.5 0.5 0.5 1" group="5" contype="0" conaffinity="0"/>
+              <!-- Sphere at end of link2 cylinder -->
+              <geom name="link2_sphere" type="sphere" size="0.03" pos="0 0 0.392" rgba="1 1 1 1" group="5" contype="0" conaffinity="0"/>
+              <geom mesh="forearm_vis_0" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
+              <geom mesh="forearm_vis_1" material="LinkGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+              <geom mesh="forearm_vis_2" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+              <geom mesh="forearm_vis_3" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+              <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="forearm" name="forearm_col" group="3"/>
+              <body name="wrist_1_link" pos="0 0 0.392" quat="1 0 0 0">
+                <inertial pos="0 0.127 0" mass="1.219" diaginertia="0.0025599 0.0025599 0.0021942"/>
+                <joint name="wrist_1_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-6.28319 6.28319" damping="0.001" frictionloss="0.01"/>
+                <site name="wrist_1_joint_site" size="0.1" pos="0 0 0" rgba="1 1 0 1" type="sphere" group="5"/>
+                <!-- Center of Mass of Link 3 (wrist_1 + wrist_2 + wrist_3) relative to wrist_1_link origin -->
+                <site name="link3_com" size="0.01" pos="0 0.132549 0.053595" rgba="0 1 0 1" type="sphere" group="3"/>
+                <!-- Cylinder to verify distance from wrist_1_joint_site toward end_effector -->
+                <!-- Original box extended from (0, 0.127, 0) to (0, 0.127, 0.139) along z-axis (after rotation, this points toward end effector) -->
+                <!-- Positioned so it ends at end_effector_site at (0, 0.127, 0.139) relative to wrist_1_link -->
+                <geom name="link3_cylinder" type="cylinder" fromto="0 0.127 0 0 0.127 0.139" size="0.02" rgba="1 1 1 1" group="5" contype="0" conaffinity="0"/>
+                <!-- Sphere at end of link3 cylinder -->
+                <geom name="link3_sphere" type="sphere" size="0.03" pos="0 0.127 0.139" rgba="1 1 0 1" group="5" contype="0" conaffinity="0"/>
+                <geom mesh="wrist1_vis_0" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+                <geom mesh="wrist1_vis_1" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
+                <geom mesh="wrist1_vis_2" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+                <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="wrist1" name="wrist1_col" group="3"/>
+                <body name="wrist_2_link" pos="0 0.127 0">
+                  <inertial pos="0 0 0.1" mass="1.219" diaginertia="0.0025599 0.0025599 0.0021942"/>
+                  <!-- End effector site positioned along wrist_2 rotation axis (z-axis) -->
+                  <site name="end_effector_site" size="0.001" pos="0 0 0.139" rgba="1 0 0 1" type="sphere" group="5"/>
+                  <geom name="end_effector_body" size="0.001" pos="0 0 0.139" rgba="1 0 0 1" type="sphere"/>
+                  <geom mesh="wrist2_vis_0" material="Black" type="mesh" contype="0" conaffinity="0" group="1"/>
+                  <geom mesh="wrist2_vis_1" material="URBlue" type="mesh" contype="0" conaffinity="0" group="1"/>
+                  <geom mesh="wrist2_vis_2" material="JointGrey" type="mesh" contype="0" conaffinity="0" group="1"/>
+                  <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="wrist2" name="wrist2_col" group="3"/>
+                  <body name="wrist_3_link" pos="0 0 0.1" quat="0 0 1 0">
+                    <inertial pos="0 0.0771683 0" quat="0.707107 0 0 0.707107 " mass="0.1889" diaginertia="0.000132134 9.90863e-05 9.90863e-05"/>
+                    <geom material="LinkGrey" mesh="wrist3_vis" type="mesh" contype="0" conaffinity="0" group="1"/>
+                    <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="wrist3" name="wrist3_col" group="3"/>
+                    <geom size="0.005 0.005 0.005" pos="0 0.09 0" quat="0.707107 0 0 0.707107" type="box" name="wrist3_col2" group="3"/>
+                    <body name="right_hand" pos="0 0.098 0" quat="0.707 -0.707 0 0">
+                      <!-- This camera points out from the eef. -->
+                      <camera mode="fixed" name="eye_in_hand" pos="0.05 0 0" quat="0 0.707108 0.707108 0" fovy="75"/>
+
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <!-- Joint position sensors -->
+    <jointpos name="shoulder_lift_pos" joint="shoulder_lift_joint" />
+    <jointpos name="elbow_pos" joint="elbow_joint" />
+    <jointpos name="wrist_1_pos" joint="wrist_1_joint" />
+
+    <!-- Joint velocity sensors -->
+    <jointvel name="shoulder_lift_vel" joint="shoulder_lift_joint" />
+    <jointvel name="elbow_vel" joint="elbow_joint" />
+    <jointvel name="wrist_1_vel" joint="wrist_1_joint" />
+
+    <!-- Joint actuator force sensors -->
+    <jointactuatorfrc name="shoulder_lift_torque" joint="shoulder_lift_joint" />
+    <jointactuatorfrc name="elbow_torque" joint="elbow_joint" />
+    <jointactuatorfrc name="wrist_1_torque" joint="wrist_1_joint" />
+
+    <!-- IMU sensors -->
+    <framequat name="imu_quat" objtype="site" objname="imu" />
+    <gyro name="imu_gyro" site="imu" />
+    <accelerometer name="imu_acc" site="imu" />
+
+    <!-- Frame position and velocity sensors -->
+    <framepos name="frame_pos" objtype="site" objname="imu" />
+    <framelinvel name="frame_vel" objtype="site" objname="imu" />
+
+
+
+    <!-- Frame force sensors -->
+    <force name="ee_force" site="end_effector_site"/>
+  </sensor>
+
+
+</mujoco>
