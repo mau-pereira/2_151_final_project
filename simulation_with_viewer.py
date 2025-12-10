@@ -1,10 +1,6 @@
 """
 Force-augmented LQR controller using analytical EOM for 3-link arm.
 
-This script is based on `lqr_eom_complete_version2.py` and extends it with
-an additional 7th state for **normal contact force**, so that both joint
-configuration and contact force can be regulated.
-
 It:
 1. Derives equations of motion using Lagrangian mechanics (3-DOF planar UR5e)
 2. Computes A and B matrices analytically using Jacobians
@@ -13,11 +9,15 @@ It:
    end-effector, measured from MuJoCo
 5. Stabilizes the robot around a desired joint state while also regulating
    the normal force to a target value.
+6. Can produce a disturbance by editing its parameters below.
 
 Usage:
-    - Set the desired joint state by modifying q_desired below.
+    - Set the desired joint state by modifying q_desired and WALL_REF_SITE_NAME 
+    (low, medium, or high) below.
     - Set the desired normal force F_N_DES.
-    - Run: python lqr_force_version4.py
+    - Set the disturbance parameters below.
+    - Run
+
 """
 import sympy as sp
 import numpy as np
@@ -134,8 +134,7 @@ def ee_jacobian(model, data, site_id, qvel_addrs):
     3x3 translational Jacobian of the EE site with respect to the selected
     3 DOFs (shoulder_lift, elbow, wrist_1).
 
-    This mirrors the helper used in lqr_force_version2.py and is used here
-    to approximate how joint deviations change EE position (and thus normal
+    Used to approximate how joint deviations change EE position (and thus normal
     contact force) around the equilibrium.
     """
     jacp = np.zeros((3, model.nv))
@@ -265,7 +264,7 @@ def compute_linearization_from_eom(q_eq, qdot_eq, tau_eq, param_values):
 n_states_joint = 6
 n_controls = 3
 
-# Desired joint configuration (you can change this)
+# Desired joint configuration
 q_desired = np.array([1.97253242, 1.26623755, 0.01733902])
 qdot_desired = np.array([0.0, 0.0, 0.0])
 
@@ -359,7 +358,7 @@ J_eq = ee_jacobian(model, data, ee_site_id, qvel_addrs)  # 3x3
 x_ee_eq = data.site_xpos[ee_site_id].copy()
 x_wall_eq = data.site_xpos[wall_site_id].copy()
 
-# Wall normal n_hat: same convention as in lqr_force_version2.py
+# Wall normal n_hat
 n_hat = np.array([1.0, 0.0, 0.0])
 if x_ee_eq[0] > x_wall_eq[0]:
     n_hat = -n_hat
@@ -370,11 +369,8 @@ print(f"Wall reference position (site 'medium'): {x_wall_eq}")
 print(f"Wall normal n_hat: {n_hat}")
 print(f"Desired normal force F_N_DES: {F_N_DES} N")
 
-# Effective contact stiffness in the normal direction (tunable scalar).
-# This plays the same conceptual role as k_c in lqr_force_version2.py, but
-# is only a single parameter; the LQI will determine how it maps into per-
-# joint gains via C_F and the Riccati solution.
-k_c_eff = 1500.0  # [N/m], adjust if needed based on observed behavior
+# Effective contact stiffness in the normal direction
+k_c_eff = 1500.0  # [N/m]
 
 # C_q: row mapping joint angle deviations to normal force deviation
 # F_n ≈ k_c_eff * (n_hat^T J_eq) (q - q_eq)
@@ -403,7 +399,7 @@ Q_aug = np.zeros((n_states_aug, n_states_aug))
 Q_aug[:n_states_joint, :n_states_joint] = Q_joint
 
 # Weight on integral of force error z_f
-Q_aug[n_states_joint, n_states_joint] = 50.0  # tune as needed
+Q_aug[n_states_joint, n_states_joint] = 50.0 
 
 R = np.eye(n_controls) * 0.5 # Control effort weight
 
@@ -442,11 +438,14 @@ baseline_force_magnitude = None
 baseline_settled = False
 baseline_settle_time = 2.0  # Wait 2 seconds to establish baseline
 
-# Disturbance parameters
+# ============================================================================
+# DISTURBANCE PARAMETERS
+# ============================================================================
 DISTURBANCE_START_TIME = 5.0  # [s]
 DISTURBANCE_DURATION = 1.0     # [s]
-DISTURBANCE_FORCE = 0.0        # [N] - upward force
-DISTURBANCE_DIRECTION = np.array([0.0, 0.0, 1.0])  # Upward in world frame
+DISTURBANCE_FORCE = 10.0        # [N]
+DISTURBANCE_DIRECTION = np.array([1.0, 0.0, 1.0]) 
+# ============================================================================
 
 # Set up viewer
 with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as viewer:
@@ -483,6 +482,9 @@ with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui
         for i, act_id in enumerate(actuator_ids):
             data.ctrl[act_id] = u[i]
 
+        # ====================================================================
+        # DISTURBANCE APPLICATION
+        # ====================================================================
         # Clear qfrc_applied before applying new forces (prevent accumulation)
         data.qfrc_applied[:] = 0.0
         
@@ -492,16 +494,15 @@ with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui
             # This is the position of the "end_effector_site" (0.139m along z-axis of wrist_2_link)
             ee_pos = data.site_xpos[ee_site_id].copy()
             # Force and torque in world frame (upward force, no torque)
-            # Note: mj_applyFT applies force to body (wrist_2_link) at the specified world point.
-            # Since the point is not at the body's COM, this creates both force and torque on the body.
             force_world = (DISTURBANCE_FORCE * DISTURBANCE_DIRECTION).reshape(3, 1)
             torque_world = np.zeros((3, 1))
             # qfrc_target: where to store the resulting generalized forces
             qfrc_target = np.zeros((model.nv, 1))
-            # Apply 1N upward force at end-effector site position (world coordinates)
+            # Apply force at end-effector site position (world coordinates)
             mujoco.mj_applyFT(model, data, force_world, torque_world, ee_pos.reshape(3, 1), ee_body_id, qfrc_target)
             # Set the generalized forces (not add, to prevent accumulation)
             data.qfrc_applied[:] = qfrc_target.flatten()
+        # ====================================================================
 
         # Step simulation
         mujoco.mj_step(model, data)
@@ -509,7 +510,9 @@ with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui
         # Periodic logging
         if step % 50 == 0:
             pos_err = x_joint[:3] - x_desired_joint[:3]
+            # === DISTURBANCE STATUS ===
             disturbance_active = "YES" if (DISTURBANCE_START_TIME <= data.time < DISTURBANCE_START_TIME + DISTURBANCE_DURATION) else "NO"
+            # ==========================
             
             # Also check for mouse drag forces
             perturb_force = data.xfrc_applied[ee_body_id, :3]
@@ -520,7 +523,7 @@ with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui
                 f"F_n_meas={F_n_meas:7.3f} N  "
                 f"F_err={F_n_meas - F_N_DES:7.3f} N  "
                 f"z_f={z_f:7.4f}  "
-                f"disturbance={disturbance_active}  "
+                f"disturbance={disturbance_active}  "  # === DISTURBANCE ===
                 f"mouse_force={perturb_magnitude:.2f} N  "
                 f"pos_err_norm={np.linalg.norm(pos_err):.6f}"
             )

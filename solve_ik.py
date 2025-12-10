@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Solve IK to position end effector near target_1 sphere."""
 
 import mujoco

@@ -1,24 +1,6 @@
 
 """
-Force-augmented LQR controller using analytical EOM for 3-link arm.
-
-This script is based on `lqr_eom_complete_version2.py` and extends it with
-an additional 7th state for **normal contact force**, so that both joint
-configuration and contact force can be regulated.
-
-It:
-1. Derives equations of motion using Lagrangian mechanics (3-DOF planar UR5e)
-2. Computes A and B matrices analytically using Jacobians
-3. Computes joint-space LQR gains for the 6 joint states
-4. Augments the feedback with a 7th state: normal force error at the
-   end-effector, measured from MuJoCo
-5. Stabilizes the robot around a desired joint state while also regulating
-   the normal force to a target value.
-
-Usage:
-    - Set the desired joint state by modifying q_desired below.
-    - Set the desired normal force F_N_DES.
-    - Run: python lqr_force_version4.py
+Script to obtain graphs for the paper.
 """
 import sympy as sp
 import numpy as np
