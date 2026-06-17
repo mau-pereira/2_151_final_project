@@ -1,0 +1,5 @@
+# Python deps for 2.151 MuJoCo simulations (simulation_with_viewer.py, etc.)
+mujoco>=3.2.0
+numpy>=1.26.0
+scipy>=1.11.0
+sympy>=1.12

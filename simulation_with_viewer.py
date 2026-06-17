@@ -1,29 +1,99 @@
 """
 Force-augmented LQR controller using analytical EOM for 3-link arm.
 
-It:
-1. Derives equations of motion using Lagrangian mechanics (3-DOF planar UR5e)
-2. Computes A and B matrices analytically using Jacobians
-3. Computes joint-space LQR gains for the 6 joint states
-4. Augments the feedback with a 7th state: normal force error at the
-   end-effector, measured from MuJoCo
-5. Stabilizes the robot around a desired joint state while also regulating
-   the normal force to a target value.
-6. Can produce a disturbance by editing its parameters below.
+Interactive MuJoCo viewer for the UR5e wall-contact test. Edit USER CONFIG at
+the top, then run from this directory:
 
-Usage:
-    - Set the desired joint state by modifying q_desired and WALL_REF_SITE_NAME 
-    (low, medium, or high) below.
-    - Set the desired normal force F_N_DES.
-    - Set the disturbance parameters below.
-    - Run
+    .venv/Scripts/python.exe simulation_with_viewer.py
 
+The viewer runs until you close the window. For JSON export (portfolio playback),
+use export_trajectory.py with the same USER CONFIG fields.
 """
-import sympy as sp
-import numpy as np
-import scipy.linalg
+from __future__ import annotations
+
+import sys
+
 import mujoco
 import mujoco.viewer
+import numpy as np
+import scipy.linalg
+import sympy as sp
+
+# =============================================================================
+# USER CONFIG — edit these, then run the script
+# =============================================================================
+
+ROBOT_CONFIG = "medium"          # "high" | "medium" | "low" (scene.xml keyframes)
+FORCE_ON_WALL_N = 10.0           # desired normal contact force [N]
+
+DISTURBANCE_MAGNITUDE_N = 1.0   # external wrench magnitude on end effector [N]
+DISTURBANCE_DIRECTION = np.array([1.0, 0.0, 1.0])  # world-frame direction (normalized internally)
+DISTURBANCE_START_TIME = 5.0     # when the disturbance begins [s]
+DISTURBANCE_DURATION_SECONDS = 1.0  # how long the disturbance lasts [s]
+
+# Minimum simulation horizon used to validate the disturbance window. The viewer
+# itself runs until you close the window (not capped at this value).
+SIM_TIME_SECONDS = 15.0
+
+# LQI / contact model tuning
+CONTACT_STIFFNESS_N_PER_M = 1500.0
+Q_POSITION_WEIGHT = 500.0
+Q_VELOCITY_WEIGHT = 50.0
+Q_FORCE_INTEGRAL_WEIGHT = 50.0
+R_CONTROL_WEIGHT = 0.5
+
+# MuJoCo passive viewer camera (MuJoCo world frame: x, y, z)
+VIEWER_CAMERA_LOOKAT = (0.35, 0.1, 0.3)
+VIEWER_CAMERA_DISTANCE = 2.0
+VIEWER_CAMERA_AZIMUTH = 135
+VIEWER_CAMERA_ELEVATION = -15
+
+LOG_EVERY_N_STEPS = 50
+
+# =============================================================================
+# Model helpers
+# =============================================================================
+
+WALL_REF_POS = {
+    "low": np.array([0.7, 0.135, 0.05]),
+    "medium": np.array([0.7, 0.135, 0.5]),
+    "high": np.array([0.7, 0.135, 0.8]),
+}
+
+VALID_CONFIGS = frozenset(WALL_REF_POS)
+
+
+def validate_user_config() -> None:
+    config = ROBOT_CONFIG.strip().lower()
+    if config not in VALID_CONFIGS:
+        raise ValueError(f"ROBOT_CONFIG must be one of {sorted(VALID_CONFIGS)}, got '{ROBOT_CONFIG}'")
+    if SIM_TIME_SECONDS <= DISTURBANCE_START_TIME:
+        raise ValueError("SIM_TIME_SECONDS must be greater than DISTURBANCE_START_TIME")
+    if DISTURBANCE_DURATION_SECONDS <= 0:
+        raise ValueError("DISTURBANCE_DURATION_SECONDS must be positive")
+    if DISTURBANCE_START_TIME + DISTURBANCE_DURATION_SECONDS > SIM_TIME_SECONDS:
+        raise ValueError(
+            "Disturbance window exceeds SIM_TIME_SECONDS: "
+            f"start({DISTURBANCE_START_TIME}) + duration({DISTURBANCE_DURATION_SECONDS}) "
+            f"> SIM_TIME_SECONDS({SIM_TIME_SECONDS})"
+        )
+    if np.linalg.norm(DISTURBANCE_DIRECTION) < 1e-9:
+        raise ValueError("DISTURBANCE_DIRECTION must be non-zero")
+
+
+def load_q_desired_from_keyframe(model, data, config: str, qpos_addrs) -> np.ndarray:
+    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, config)
+    if key_id < 0:
+        raise ValueError(f"Unknown keyframe '{config}' in scene.xml")
+    mujoco.mj_resetDataKeyframe(model, data, key_id)
+    return np.array([data.qpos[addr] for addr in qpos_addrs], dtype=float)
+
+
+def normalized_disturbance_vector() -> tuple[np.ndarray, np.ndarray, float]:
+    dist_unit = DISTURBANCE_DIRECTION / np.linalg.norm(DISTURBANCE_DIRECTION)
+    dist_vector = DISTURBANCE_MAGNITUDE_N * dist_unit
+    dist_end_time = DISTURBANCE_START_TIME + DISTURBANCE_DURATION_SECONDS
+    return dist_unit, dist_vector, dist_end_time
 
 # Time variable
 t = sp.symbols('t')
@@ -254,282 +324,192 @@ def compute_linearization_from_eom(q_eq, qdot_eq, tau_eq, param_values):
 
 
 
-# ============================================================================
-# CONFIGURATION: Desired state vector (joint + force-integral)
-#   x_joint = [q1, q2, q3, q1dot, q2dot, q3dot]      (for EOM / base LQR)
-#   x_aug   = [q1, q2, q3, q1dot, q2dot, q3dot, z_f] (for LQI feedback)
-# ============================================================================
+def run_simulation() -> None:
+    validate_user_config()
+    config = ROBOT_CONFIG.strip().lower()
+    dist_unit, dist_vector, dist_end_time = normalized_disturbance_vector()
 
-# 6 joint states used for analytic linearization and Riccati solve
-n_states_joint = 6
-n_controls = 3
+    n_states_joint = 6
+    n_states_aug = 7
+    n_controls = 3
 
-# Desired joint configuration
-q_desired = np.array([1.97253242, 1.26623755, 0.01733902])
-qdot_desired = np.array([0.0, 0.0, 0.0])
+    print("\n" + "=" * 70)
+    print("PART 2: Computing Linearization Matrices (Joint States Only)")
+    print("=" * 70)
 
-x_desired_joint = np.zeros(n_states_joint)
-x_desired_joint[:3] = q_desired
-x_desired_joint[3:] = qdot_desired
+    print("\nComputing feedforward torques (gravity compensation)...")
+    model = mujoco.MjModel.from_xml_path("scene.xml")
+    data = mujoco.MjData(model)
 
-# Augmented state (adds 7th entry for integral of normal force error z_f)
-n_states_aug = 7
+    joint_names = ["shoulder_lift_joint", "elbow_joint", "wrist_1_joint"]
+    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name) for name in joint_names]
+    qpos_addrs = [model.joint(joint_id).qposadr[0] for joint_id in joint_ids]
+    qvel_addrs = [model.joint(joint_id).dofadr[0] for joint_id in joint_ids]
+    actuator_names = ["torq_j2", "torq_j3", "torq_j4"]
+    actuator_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in actuator_names]
 
-# Desired normal force (env-on-robot, positive when pushing into wall)
-F_N_DES = 10.0  # [N]
+    ee_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "end_effector_site")
+    ee_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "wrist_2_link")
+    ee_force_sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "ee_force")
+    ee_force_adr = model.sensor_adr[ee_force_sid]
+    ee_force_dim = model.sensor_dim[ee_force_sid]
 
-# ============================================================================
-# PART 3: SETUP AND COMPUTATION
-# ============================================================================
-print("\n" + "="*70)
-print("PART 2: Computing Linearization Matrices (Joint States Only)")
-print("="*70)
+    q_desired = load_q_desired_from_keyframe(model, data, config, qpos_addrs)
+    qdot_desired = np.zeros(3)
 
-# Compute feedforward torques using MuJoCo at the joint equilibrium
-print("\nComputing feedforward torques (gravity compensation)...")
-model = mujoco.MjModel.from_xml_path("scene.xml")
-data = mujoco.MjData(model)
+    x_desired_joint = np.zeros(n_states_joint)
+    x_desired_joint[:3] = q_desired
+    x_desired_joint[3:] = qdot_desired
 
-joint_names = ["shoulder_lift_joint", "elbow_joint", "wrist_1_joint"]
-joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name) for name in joint_names]
-qpos_addrs = [model.joint(joint_id).qposadr[0] for joint_id in joint_ids]
-qvel_addrs = [model.joint(joint_id).dofadr[0] for joint_id in joint_ids]
-actuator_names = ["torq_j2", "torq_j3", "torq_j4"]
-actuator_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in actuator_names]
+    for i, addr in enumerate(qpos_addrs):
+        data.qpos[addr] = q_desired[i]
+    for i, addr in enumerate(qvel_addrs):
+        data.qvel[addr] = qdot_desired[i]
 
-# Force sensor and wall / EE sites (for measuring F_n in simulation)
-EE_SITE_NAME = "end_effector_site"
-WALL_REF_SITE_NAME = "medium"
-EE_FORCE_SENSOR_NAME = "ee_force"
+    mujoco.mj_forward(model, data)
 
-ee_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, EE_SITE_NAME)
-wall_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, WALL_REF_SITE_NAME)
-ee_force_sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, EE_FORCE_SENSOR_NAME)
-ee_force_adr = model.sensor_adr[ee_force_sid]
-ee_force_dim = model.sensor_dim[ee_force_sid]  # expected 3 for <force>
+    data.ctrl[:] = 0.0
+    data.qacc[:] = 0.0
+    mujoco.mj_inverse(model, data)
+    u_ff = data.qfrc_inverse[qvel_addrs].copy()
 
-# Get body ID for end-effector (wrist_2_link contains the end_effector_site)
-EE_BODY_NAME = "wrist_2_link"
-ee_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, EE_BODY_NAME)
+    print(f"  Config: {config!r}, q_desired: {q_desired}")
+    print(f"  Feedforward torques: {u_ff}")
 
-# Set equilibrium state (joint space only)
-for i, addr in enumerate(qpos_addrs):
-    data.qpos[addr] = q_desired[i]
-for i, addr in enumerate(qvel_addrs):
-    data.qvel[addr] = qdot_desired[i]
+    A, B = compute_linearization_from_eom(q_desired, qdot_desired, u_ff, param_values)
 
-mujoco.mj_forward(model, data)
+    print(f"\nA matrix shape: {A.shape}")
+    print(f"B matrix shape: {B.shape}")
 
-# Compute feedforward torque at the equilibrium
-data.ctrl[:] = 0.0
-data.qacc[:] = 0.0
-mujoco.mj_inverse(model, data)
-u_ff = data.qfrc_inverse[qvel_addrs].copy()
+    print("\n" + "=" * 70)
+    print("PART 3: Building Augmented LQI Model (Joint + Force-Integral)")
+    print("=" * 70)
 
-print(f"  Feedforward torques: {u_ff}")
+    J_eq = ee_jacobian(model, data, ee_site_id, qvel_addrs)
+    x_ee_eq = data.site_xpos[ee_site_id].copy()
+    x_wall_eq = WALL_REF_POS[config].copy()
 
-# ----------------------------------------------------------------------------
-# Compute A and B matrices directly from the EOM (6x6, 6x3)
-# ----------------------------------------------------------------------------
-A, B = compute_linearization_from_eom(q_desired, qdot_desired, u_ff, param_values)
+    n_hat = np.array([1.0, 0.0, 0.0])
+    if x_ee_eq[0] > x_wall_eq[0]:
+        n_hat = -n_hat
+    n_hat /= np.linalg.norm(n_hat)
 
-print(f"\nA matrix shape: {A.shape}")
-print(f"B matrix shape: {B.shape}")
+    print(f"EE equilibrium position: {x_ee_eq}")
+    print(f"Wall reference position ({config}): {x_wall_eq}")
+    print(f"Wall normal n_hat: {n_hat}")
+    print(f"Desired normal force: {FORCE_ON_WALL_N} N")
 
-# ----------------------------------------------------------------------------
-# Build augmented (LQI) model with integral of normal force error z_f:
-#
-#   x_joint_dot = A x_joint + B u
-#   z_f_dot     = (F_n - F_N_DES) ≈ C_F x_joint   (around equilibrium)
-#
-# where C_F is a 1x6 row vector approximating how joint-state deviations
-# change normal force, using a simple contact-stiffness model:
-#
-#   F_n ≈ k_c_eff * (n_hat^T J_eq) (q - q_eq)
-#
-# We ignore dependence on velocities in C_F (quasi-static contact).
-# ----------------------------------------------------------------------------
-print("\n" + "="*70)
-print("PART 3: Building Augmented LQI Model (Joint + Force-Integral)")
-print("="*70)
+    C_q = CONTACT_STIFFNESS_N_PER_M * (n_hat @ J_eq)
+    C_F = np.zeros(n_states_joint)
+    C_F[:3] = C_q
 
-# Compute EE Jacobian and wall normal at the equilibrium
-J_eq = ee_jacobian(model, data, ee_site_id, qvel_addrs)  # 3x3
-x_ee_eq = data.site_xpos[ee_site_id].copy()
-x_wall_eq = data.site_xpos[wall_site_id].copy()
+    print(f"Approximate C_F (dF_n/dx) row: {C_F}")
 
-# Wall normal n_hat
-n_hat = np.array([1.0, 0.0, 0.0])
-if x_ee_eq[0] > x_wall_eq[0]:
-    n_hat = -n_hat
-n_hat = n_hat / np.linalg.norm(n_hat)
+    A_aug = np.zeros((n_states_aug, n_states_aug))
+    A_aug[:n_states_joint, :n_states_joint] = A
+    A_aug[n_states_aug - 1, :n_states_joint] = C_F
 
-print(f"EE equilibrium position: {x_ee_eq}")
-print(f"Wall reference position (site 'medium'): {x_wall_eq}")
-print(f"Wall normal n_hat: {n_hat}")
-print(f"Desired normal force F_N_DES: {F_N_DES} N")
+    B_aug = np.zeros((n_states_aug, n_controls))
+    B_aug[:n_states_joint, :] = B
 
-# Effective contact stiffness in the normal direction
-k_c_eff = 1500.0  # [N/m]
+    Q_joint = np.eye(n_states_joint)
+    Q_joint[:3, :3] *= Q_POSITION_WEIGHT
+    Q_joint[3:, 3:] *= Q_VELOCITY_WEIGHT
 
-# C_q: row mapping joint angle deviations to normal force deviation
-# F_n ≈ k_c_eff * (n_hat^T J_eq) (q - q_eq)
-C_q = k_c_eff * (n_hat @ J_eq)  # shape (3,)
+    Q_aug = np.zeros((n_states_aug, n_states_aug))
+    Q_aug[:n_states_joint, :n_states_joint] = Q_joint
+    Q_aug[n_states_aug - 1, n_states_aug - 1] = Q_FORCE_INTEGRAL_WEIGHT
 
-# Build C_F (1x6) acting on [q1, q2, q3, q1dot, q2dot, q3dot]
-C_F = np.zeros(n_states_joint)
-C_F[:3] = C_q
+    R = np.eye(n_controls) * R_CONTROL_WEIGHT
 
-print(f"Approximate C_F (dF_n/dx) row: {C_F}")
+    print("Solving Riccati equation (augmented joint + force-integral states)...")
+    P = scipy.linalg.solve_continuous_are(A_aug, B_aug, Q_aug, R)
+    K_aug = np.linalg.solve(R, B_aug.T @ P)
 
-# Augmented A and B for [x_joint; z_f]
-A_aug = np.zeros((n_states_aug, n_states_aug))
-A_aug[:n_states_joint, :n_states_joint] = A
-A_aug[n_states_joint, :n_states_joint] = C_F  # z_f_dot = C_F * x_joint
+    print("Augmented gain matrix K_aug (including force-integral state) computed.")
+    print(f"K_aug shape: {K_aug.shape}")
+    print(f"K_aug:\n{K_aug}")
 
-B_aug = np.zeros((n_states_aug, n_controls))
-B_aug[:n_states_joint, :] = B  # z_f has no direct input
+    print("\n" + "=" * 70)
+    print("PART 4: Starting Simulation with Force-Integral-Augmented Feedback")
+    print("=" * 70)
+    print(
+        f"Disturbance: |F|={DISTURBANCE_MAGNITUDE_N} N, "
+        f"dir={dist_unit}, "
+        f"t={DISTURBANCE_START_TIME}s->{dist_end_time}s"
+    )
+    print("Close the viewer window to exit.")
 
-# Q and R matrices for the augmented (joint + integral-of-force-error) state
-Q_joint = np.eye(n_states_joint)
-Q_joint[:3, :3] *= 500.0  # Position error weight
-Q_joint[3:, 3:] *= 50.0   # Velocity error weight
+    for i, addr in enumerate(qpos_addrs):
+        data.qpos[addr] = q_desired[i]
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
 
-Q_aug = np.zeros((n_states_aug, n_states_aug))
-Q_aug[:n_states_joint, :n_states_joint] = Q_joint
-
-# Weight on integral of force error z_f
-Q_aug[n_states_joint, n_states_joint] = 50.0 
-
-R = np.eye(n_controls) * 0.5 # Control effort weight
-
-print("Solving Riccati equation (augmented joint + force-integral states)...")
-P = scipy.linalg.solve_continuous_are(A_aug, B_aug, Q_aug, R)
-
-# Augmented LQI gain: K_aug (3x7)
-K_aug = np.linalg.solve(R, B_aug.T @ P)
-
-print("Augmented gain matrix K_aug (including force-integral state) computed.")
-print(f"K_aug shape: {K_aug.shape}")
-print(f"K_aug:\n{K_aug}")
-
-# ============================================================================
-# PART 5: SIMULATION
-# ============================================================================
-print("\n" + "="*70)
-print("PART 4: Starting Simulation with Force-Integral-Augmented Feedback")
-print("="*70)
-print("Close the viewer window to exit.")
-
-
-# Initialize to desired joint positions
-for i, addr in enumerate(qpos_addrs):
-    data.qpos[addr] = q_desired[i]
-for i, addr in enumerate(qvel_addrs):
-    data.qvel[addr] = 0.0
-
-mujoco.mj_forward(model, data)
-
-# Integral of force error state z_f
-z_f = 0.0
-
-# Baseline force measurement (to subtract internal forces)
-baseline_force_magnitude = None
-baseline_settled = False
-baseline_settle_time = 2.0  # Wait 2 seconds to establish baseline
-
-# ============================================================================
-# DISTURBANCE PARAMETERS
-# ============================================================================
-DISTURBANCE_START_TIME = 5.0  # [s]
-DISTURBANCE_DURATION = 1.0     # [s]
-DISTURBANCE_FORCE = 10.0        # [N]
-DISTURBANCE_DIRECTION = np.array([1.0, 0.0, 1.0]) 
-# ============================================================================
-
-# Set up viewer
-with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as viewer:
-    viewer.cam.lookat[:] = [0.35, 0.1, 0.3]
-    viewer.cam.distance = 2.0
-    viewer.cam.azimuth = 135
-    viewer.cam.elevation = -15
-
+    z_f = 0.0
     step = 0
-    while viewer.is_running():
-        # Get current joint state
-        x_joint = np.zeros(n_states_joint)
-        x_joint[:3] = np.array([data.qpos[addr] for addr in qpos_addrs])
-        x_joint[3:] = np.array([data.qvel[addr] for addr in qvel_addrs])
 
-        # Measure contact force at end-effector (env-on-robot)
-        F_site = data.sensordata[ee_force_adr:ee_force_adr + ee_force_dim].copy()
-        R_site = data.site_xmat[ee_site_id].reshape(3, 3)
-        F_world = R_site @ F_site
-        F_n_meas = float(np.dot(F_world, n_hat))
+    with mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as viewer:
+        viewer.cam.lookat[:] = VIEWER_CAMERA_LOOKAT
+        viewer.cam.distance = VIEWER_CAMERA_DISTANCE
+        viewer.cam.azimuth = VIEWER_CAMERA_AZIMUTH
+        viewer.cam.elevation = VIEWER_CAMERA_ELEVATION
 
-        # Update integral of force error: z_f_dot = F_n - F_N_DES
-        z_f += (F_n_meas - F_N_DES) * model.opt.timestep
+        while viewer.is_running():
+            x_joint = np.zeros(n_states_joint)
+            x_joint[:3] = [data.qpos[addr] for addr in qpos_addrs]
+            x_joint[3:] = [data.qvel[addr] for addr in qvel_addrs]
 
-        # Build 7D augmented error state: [x_joint - x_desired_joint, z_f]
-        x_err_aug = np.zeros(n_states_aug)
-        x_err_aug[:n_states_joint] = x_joint - x_desired_joint
-        x_err_aug[6] = z_f
+            F_site = data.sensordata[ee_force_adr : ee_force_adr + ee_force_dim].copy()
+            R_site = data.site_xmat[ee_site_id].reshape(3, 3)
+            F_world = R_site @ F_site
+            F_n_meas = float(np.dot(F_world, n_hat))
 
-        # Compute control: u = u_ff - K_aug * x_err_aug
-        u = u_ff - K_aug @ x_err_aug
+            z_f += (F_n_meas - FORCE_ON_WALL_N) * model.opt.timestep
 
-        # Apply control
-        for i, act_id in enumerate(actuator_ids):
-            data.ctrl[act_id] = u[i]
+            x_err_aug = np.zeros(n_states_aug)
+            x_err_aug[:n_states_joint] = x_joint - x_desired_joint
+            x_err_aug[-1] = z_f
+            u = u_ff - K_aug @ x_err_aug
 
-        # ====================================================================
-        # DISTURBANCE APPLICATION
-        # ====================================================================
-        # Clear qfrc_applied before applying new forces (prevent accumulation)
-        data.qfrc_applied[:] = 0.0
-        
-        # Apply disturbance force at end-effector if in disturbance window
-        if DISTURBANCE_START_TIME <= data.time < DISTURBANCE_START_TIME + DISTURBANCE_DURATION:
-            # Get current end-effector position in world frame
-            # This is the position of the "end_effector_site" (0.139m along z-axis of wrist_2_link)
-            ee_pos = data.site_xpos[ee_site_id].copy()
-            # Force and torque in world frame (upward force, no torque)
-            force_world = (DISTURBANCE_FORCE * DISTURBANCE_DIRECTION).reshape(3, 1)
-            torque_world = np.zeros((3, 1))
-            # qfrc_target: where to store the resulting generalized forces
-            qfrc_target = np.zeros((model.nv, 1))
-            # Apply force at end-effector site position (world coordinates)
-            mujoco.mj_applyFT(model, data, force_world, torque_world, ee_pos.reshape(3, 1), ee_body_id, qfrc_target)
-            # Set the generalized forces (not add, to prevent accumulation)
-            data.qfrc_applied[:] = qfrc_target.flatten()
-        # ====================================================================
+            for i, act_id in enumerate(actuator_ids):
+                data.ctrl[act_id] = u[i]
 
-        # Step simulation
-        mujoco.mj_step(model, data)
+            data.qfrc_applied[:] = 0.0
+            dist_active = DISTURBANCE_START_TIME <= data.time < dist_end_time
+            if dist_active:
+                ee_pos = data.site_xpos[ee_site_id].copy()
+                force_world = dist_vector.reshape(3, 1)
+                torque_world = np.zeros((3, 1))
+                qfrc_target = np.zeros((model.nv, 1))
+                mujoco.mj_applyFT(
+                    model, data, force_world, torque_world,
+                    ee_pos.reshape(3, 1), ee_body_id, qfrc_target,
+                )
+                data.qfrc_applied[:] = qfrc_target.flatten()
 
-        # Periodic logging
-        if step % 50 == 0:
-            pos_err = x_joint[:3] - x_desired_joint[:3]
-            # === DISTURBANCE STATUS ===
-            disturbance_active = "YES" if (DISTURBANCE_START_TIME <= data.time < DISTURBANCE_START_TIME + DISTURBANCE_DURATION) else "NO"
-            # ==========================
-            
-            # Also check for mouse drag forces
-            perturb_force = data.xfrc_applied[ee_body_id, :3]
-            perturb_magnitude = np.linalg.norm(perturb_force)
-            
-            print(
-                f"t={data.time:6.3f}  "
-                f"F_n_meas={F_n_meas:7.3f} N  "
-                f"F_err={F_n_meas - F_N_DES:7.3f} N  "
-                f"z_f={z_f:7.4f}  "
-                f"disturbance={disturbance_active}  "  # === DISTURBANCE ===
-                f"mouse_force={perturb_magnitude:.2f} N  "
-                f"pos_err_norm={np.linalg.norm(pos_err):.6f}"
-            )
-        step += 1
+            mujoco.mj_step(model, data)
 
-        # Sync viewer
-        viewer.sync()
+            if step % LOG_EVERY_N_STEPS == 0:
+                pos_err = x_joint[:3] - x_desired_joint[:3]
+                perturb_magnitude = np.linalg.norm(data.xfrc_applied[ee_body_id, :3])
+                print(
+                    f"t={data.time:6.3f}  "
+                    f"F_n_meas={F_n_meas:7.3f} N  "
+                    f"F_err={F_n_meas - FORCE_ON_WALL_N:7.3f} N  "
+                    f"z_f={z_f:7.4f}  "
+                    f"disturbance={'YES' if dist_active else 'NO':>3}  "
+                    f"mouse_force={perturb_magnitude:.2f} N  "
+                    f"pos_err_norm={np.linalg.norm(pos_err):.6f}"
+                )
+            step += 1
+            viewer.sync()
 
-print("\nSimulation complete.")
+    print("\nSimulation complete.")
+
+
+if __name__ == "__main__":
+    try:
+        run_simulation()
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
